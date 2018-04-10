@@ -1,10 +1,14 @@
 """
 Author: Willem Hengeveld <itsme@xs4all.nl>
 
-idea is to have this tool automatically follow the '*_url' links, and enumerate lists received.
+Commandline tool for searching github.
 
-So have an option to list further options.
+* find all very large repositories:
+github -a -w repo -q "size:>8000000"
 
+
+* find all very large files:
+github -a -w code -q "in:path zip size:>500000000"
 """
 import asyncio
 import aiohttp.connector
@@ -14,99 +18,41 @@ import html.parser
 import urllib.parse
 import time
 import re
+import json
 from collections import defaultdict
 
 
 class GithubApi:
     """
-
-    /users/<username>
-        *_url
-    /orgs/<orgname>
-        *_url
-
-    -- need auth
-    /user/repos       -- current user repos  
-
-
-    pager:  page=<n>&per_page=100
-
-    /search/code?q=
-
+    Object for accessing github.
+    Currently several search functions, user repository list and ratelimit status are implemented.
     """
     def __init__(self, loop, args):
+        """
+        The constructor takes a runloop, and a generic args object.
+        Currently 'args.auth' is used from args.
+        """
         self.baseurl = "https://api.github.com/"
 
         hdrs = dict(Accept='application/vnd.github.v3+json')
 
-
-        #  application/vnd.github+json
-        #  application/vnd.github-commitcomment.full+json
-        #  application/vnd.github-commitcomment.html+json
-        #  application/vnd.github-commitcomment.raw+json
-        #  application/vnd.github-commitcomment.text+json
-        #  application/vnd.github.VERSION+json
-        #  application/vnd.github.VERSION.base64
-        #  application/vnd.github.VERSION.diff
-        #  application/vnd.github.VERSION.full+json
-        #  application/vnd.github.VERSION.html
-        #  application/vnd.github.VERSION.html+json
-        #  application/vnd.github.VERSION.object
-        #  application/vnd.github.VERSION.patch
-        #  application/vnd.github.VERSION.raw
-        #  application/vnd.github.VERSION.raw+json
-        #  application/vnd.github.VERSION.sha
-        #  application/vnd.github.VERSION.text+json
-
-        #  application/vnd.github.v3+json
-        #  application/vnd.github.v3.diff
-        #  application/vnd.github.v3.full+json
-        #  application/vnd.github.v3.raw+json
-        #  application/vnd.github.v3.repository+json
-        #  application/vnd.github.v3.star+json
-        #  application/vnd.github.v3.text-match+json
-        #  application/vnd.github.v3.text-match+json,
-        #  application/vnd.github[.version].param[+json]
-
-        #  application/vnd.github.full+json
-
-        #  application/vnd.github.ant-man-preview+json
-        #  application/vnd.github.barred-rock-preview
-        #  application/vnd.github.black-panther-preview+json
-        #  application/vnd.github.cloak-preview
-        #  application/vnd.github.cloud-9-preview+json+scim
-        #  application/vnd.github.dazzler-preview+json
-        #  application/vnd.github.echo-preview+json
-        #  application/vnd.github.giant-sentry-fist-preview+json
-        #  application/vnd.github.hagar-preview+json
-        #  application/vnd.github.hellcat-preview+json
-        #  application/vnd.github.inertia-preview+json
-        #  application/vnd.github.jean-grey-preview+json
-        #  application/vnd.github.luke-cage-preview+json
-        #  application/vnd.github.machine-man-preview
-        #  application/vnd.github.machine-man-preview+json
-        #  application/vnd.github.mercy-preview
-        #  application/vnd.github.mercy-preview+json
-        #  application/vnd.github.mister-fantastic-preview+json
-        #  application/vnd.github.mockingbird-preview
-        #  application/vnd.github.nightshade-preview+json
-        #  application/vnd.github.sailor-v-preview+json
-        #  application/vnd.github.scarlet-witch-preview+json
-        #  application/vnd.github.squirrel-girl-preview
-        #  application/vnd.github.squirrel-girl-preview+json
-        #  application/vnd.github.symmetra-preview+json
-        #  application/vnd.github.symmetra-preview+json,
-        #  application/vnd.github.valkyrie-preview+json
-        #  application/vnd.github.wyandotte-preview+json
-        #  application/vnd.github.zzzax-preview+json
-
         moreargs = dict()
         if args.auth:
-            user, pw = args.auth.split(':', 1)
-            moreargs['auth'] = aiohttp.BasicAuth(user, pw)
+            if args.auth.find(':')>0:
+                user, pw = args.auth.split(':', 1)
+                # use basic authentication - using a plaintext password.
+                moreargs['auth'] = aiohttp.BasicAuth(user, pw)
+            else:
+                # use the OAuth token
+                hdrs['Authorization'] = 'token %s' % args.auth
+
+        # note: 2 more authentication methods exist:
+        #  * with the OAuth token passed with the 'access_token' url query parameter
+        #  * with the client_id + client_secret query parameters
 
         self.client = aiohttp.ClientSession(loop=loop, headers=hdrs, **moreargs)
 
+        # this list can also be obtained from 'baseurl'
         self.d = {
             "authorizations_url": "https://api.github.com/authorizations",
             "code_search_url": "https://api.github.com/search/code?q={query}{&page,per_page,sort,order}",
@@ -142,61 +88,95 @@ class GithubApi:
         }
 
     def __del__(self):
+        """
+        Make sure we close the client when this object is destroyed.
+        """
         self.client.close()
 
     async def get(self, path, params=dict()):
+        """
+        Return json response + http header list.
+        """
         r = await self.client.get(path, params=params)
         json = await r.json()
-
         r.close()
-        return json
+
+        if r.status!=200:
+            print("HTTP status", r.status, json)
+            raise Exception(json.get('message'))
+
+        return json, r.headers
 
     async def loadapi(self):
-        self.d = await self.get(url)
+        """
+        Load the api map from github.
+        """
+        self.d = await self.get(self.baseurl)
 
-    def getapi(self, name):
-        url = self.d.get(name)
+    def getapi(self, apiname):
+        """
+        get the url for the specified API.
+        """
+        url = self.d.get(apiname)
         if not url:
-            raise Exception("can't find '%s' api" % name)
+            raise Exception("can't find '%s' api" % apiname)
         return url
 
-    def getlimits(self):
+    async def getlimits(self):
+        """
+        Request the current rate limit state.
+        """
         url = self.getapi("rate_limit_url")
-        return self.get(url)
+        result, hdrs = await self.get(url)
+        return result
 
-    def listrepos(self, username):
+    def list(self, username, pagenr=1):
+        """
+        Get one page of repository results for the specified user.
+        """
         url = self.getapi("user_repositories_url")
         url = url.replace("{user}", username)
         url = url[:url.find('{')]
 
-        return self.get(url, dict(per_page=100))
+        return self.get(url, dict(per_page=100, page=pagenr))
 
-    async def startquery(self, where, query):
+    def query(self, where, query, pagenr=1):
+        """
+        Search query in domain 'where'
+
+        todo: add option for: 'Accept: application/vnd.github.v3.text-match+json' \
+        """
         url = self.getapi(where + "_search_url")
         url = url[:url.find('?')]
 
-        r = await self.client.get(url, params=dict(per_page=100, q=query))
-        json = await r.json()
-        link = r.headers['Link']
+        return self.get(url, dict(per_page=100, q=query, page=pagenr))
+    def info(self, fullname):
+        owner, repo = fullname.split('/', 1)
+        url = self.getapi('repository_url')
+        url = url.replace('{owner}', owner)
+        url = url.replace('{repo}', repo)
 
-        r.close()
-
-        return json, link
+        return self.get(url)
 
 
-    def query(self, where, pagenr, query):
-        url = self.getapi(where + "_search_url")
-        url = url[:url.find('?')]
-
-        return self.get(url, dict(per_page=100, page=pagenr, q=query))
 
 def getjs(js, path):
+    """
+    path is a 'dotted path', with each DOT representing one level
+    in the nested json dictionary.
+
+    Returns the nested value pointed to by 'path'.
+    """
     if path.find('.')>=0:
         this, rest = path.split('.', 1)
         return getjs(js[this], rest)
     return js[path]
 
+
 async def getlimits(api):
+    """
+    Get the current rate limit status.
+    """
     # guest  auth
     #    60  5000  (per hour) rate
     #    60  5000  (per hour) resources.core
@@ -207,21 +187,13 @@ async def getlimits(api):
     for path in ('rate', 'resources.core','resources.search', 'resources.graphql'):
         print("%5d of %5d  %5d(sec) %s" % (getjs(js, path+".remaining"), getjs(js, path+".limit"), getjs(js, path+".reset") - tnow, path))
 
-def printresult(where, items):
-    for item in items:
-        if where == 'code':
-            print("%-20s %s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
-        elif where == 'issue':
-            print("%-20s %s" % (getjs(item, "html_url"), getjs(item, "body")))
-        elif where == 'repo':
-            print("%-20s %s" % (getjs(item, "full_name"), getjs(item, "description")))
-        elif where == 'user':
-            print("%s" % (getjs(item, "login")))
-        else:
-            print(item)
-            # commit
- 
+
 def findlast(link):
+    """
+    Extract the last pagenumber from the 'Link' headers.
+    """
+    if not link:
+        return
     for l in link.split(", "):
         url, rel = l.split("; ", 1)
         if rel == 'rel="last"':
@@ -233,39 +205,110 @@ def findlast(link):
         return
     return int(m.group(1))
 
+
+def printresult(where, items):
+    """
+    Print one response batch of query results.
+    """
+    for item in items:
+        if where == 'code':
+            print("%-20s %s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
+        elif where == 'issue':
+            print("%-20s %s" % (getjs(item, "html_url"), getjs(item, "body")))
+        elif where == 'repo':
+            print("%8d %-25s  %s" % (getjs(item, "size"), getjs(item, "full_name"), getjs(item, "description") or ""))
+        elif where == 'user':
+            print("%s" % (getjs(item, "login")))
+        else:
+            print(item)
+            # commit
+ 
+
 async def querygithub(api, args):
+    """
+    Query a specific domain ( repo, user, issue, code ).
+    """
     if args.where == 'repo':
         where = 'repository'
     else:
         where = args.where
-    js, link = await api.startquery(where, args.query)
 
-    lastpage = findlast(link)
-
+    js, hdrs = await api.query(where, args.query)
+    lastpage = findlast(hdrs.get('Link'))
+    print("FOUND: %d items in %d pages" % (getjs(js, 'total_count'), lastpage or 1))
     printresult(args.where, js["items"])
 
-    if not args.all:
+    if not lastpage or not args.all:
         return
-    for p in range(2, lastpage):
-        js = await api.query(where, p, args.query)
+    for p in range(2, lastpage+1):
+        js, _ = await api.query(where, args.query, p)
         printresult(args.where, js["items"])
 
-async def listrepos(api, user):
-    js = await api.listrepos(user)
-    for repo in js:
+
+
+def printrepolist(jslist):
+    """
+    Print one response batch of user repositories
+    """
+    for repo in jslist:
         if not repo["fork"]:
             print("%-30s %s" % (repo["name"], repo["description"]))
+
+
+async def listrepos(api, user, args):
+    """
+    List the repositories for the specified user
+    """
+    js, hdrs = await api.list(user)
+    lastpage = findlast(hdrs.get('Link'))
+    printrepolist(js)
+    if not lastpage or not args.all:
+        return
+    for p in range(2, lastpage+1):
+        js, _ = await api.list(user)
+        printrepolist(js)
+
+def sanitizereponame(name):
+    name = re.sub(r'.*github.com/', '', name)
+    m = re.match(r'^[^/]+/[^/]+', name)
+    if not m:
+        return
+    return m.group(0)
+
+
+def printinfo(js):
+    print("%10d %-25s %s" % (getjs(js, "size"), getjs(js, "full_name"), getjs(js, "description")))
+
+async def inforepos(api, args):
+    for name in args.REPOS:
+        repo = sanitizereponame(name)
+        if not repo:
+            print("failed to parse repository name from '%s'" % name)
+            continue
+        js, hdrs = await api.info(repo)
+        printinfo(js)
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Tool for interogating github')
     parser.add_argument('--auth', type=str)
     parser.add_argument('--limits', action='store_true')
-    parser.add_argument('--list', '-l', type=str)
+    parser.add_argument('--list', '-l', type=str, help='List repositories for the specified user')
     parser.add_argument('--all', '-a', action='store_true')
     parser.add_argument('--where', '-w', type=str, default='code', help='What type of object to search for: code, user, repo, commit, issue')
-    parser.add_argument('--query', '-q', type=str)
+    parser.add_argument('--query', '-q', type=str, help='in:{path,file} language:{js,c,python,...} filename:substring extension:ext user: repo: size:')
+    parser.add_argument('REPOS', nargs='*', type=str, help='repository list to summarize')
     args = parser.parse_args()
+
+    try:
+        with open(os.getenv("HOME")+"/.github_cmdline_rc") as fh:
+            cfg = json.load(fh)
+    except Exception as e:
+        print("ERROR", e)
+        cfg = dict()
+
+    if not args.auth:
+        args.auth = cfg.get('auth')
 
     loop = asyncio.get_event_loop()
 
@@ -273,11 +316,13 @@ def main():
 
     tasks = [ ]
     if args.list:
-        tasks.append(listrepos(api, args.list))
-    if args.limits:
+        tasks.append(listrepos(api, args.list, args))
+    elif args.limits:
         tasks.append(getlimits(api))
-    if args.query:
+    elif args.query:
         tasks.append(querygithub(api, args))
+    else:
+        tasks.append(inforepos(api, args))
 
     loop.run_until_complete(asyncio.gather(*tasks))
 
