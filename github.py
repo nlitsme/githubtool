@@ -245,14 +245,20 @@ async def querygithub(api, args):
         printresult(args.where, js["items"])
 
 
+def printrepoinfo(repo, namefield, args):
+    if args.verbose:
+        print("%10d [%s ; %s] %-25s %s" % (getjs(repo, "size"), getjs(repo, "created_at"), getjs(repo, "updated_at"), getjs(repo, namefield), getjs(repo, "description")))
+    else:
+        print("%10d %-25s %s" % (getjs(repo, "size"), getjs(repo, namefield), getjs(repo, "description")))
 
-def printrepolist(jslist):
+
+def printrepolist(jslist, args):
     """
     Print one response batch of user repositories
     """
     for repo in jslist:
-        if not repo["fork"]:
-            print("%-30s %s" % (repo["name"], repo["description"]))
+        if args.all or not repo["fork"]:
+            printrepoinfo(repo, "name", args)
 
 
 async def listrepos(api, user, args):
@@ -261,12 +267,12 @@ async def listrepos(api, user, args):
     """
     js, hdrs = await api.list(user)
     lastpage = findlast(hdrs.get('Link'))
-    printrepolist(js)
+    printrepolist(js, args)
     if not lastpage or not args.all:
         return
     for p in range(2, lastpage+1):
-        js, _ = await api.list(user)
-        printrepolist(js)
+        js, _ = await api.list(user, p)
+        printrepolist(js, args)
 
 def sanitizereponame(name):
     name = re.sub(r'.*github.com/', '', name)
@@ -276,25 +282,23 @@ def sanitizereponame(name):
     return m.group(0)
 
 
-def printinfo(js):
-    print("%10d %-25s %s" % (getjs(js, "size"), getjs(js, "full_name"), getjs(js, "description")))
-
 async def inforepos(api, args):
     for name in args.REPOS:
         repo = sanitizereponame(name)
         if not repo:
             print("failed to parse repository name from '%s'" % name)
             continue
-        js, hdrs = await api.info(repo)
-        printinfo(js)
+        repo, hdrs = await api.info(repo)
+        printrepoinfo(repo, "full_name", args)
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Tool for interogating github')
-    parser.add_argument('--auth', type=str)
-    parser.add_argument('--limits', action='store_true')
+    parser.add_argument('--auth', type=str, help='OAuth token, or "username:password"')
+    parser.add_argument('--verbose', '-v', action='store_true', help='print more info, such as times')
+    parser.add_argument('--limits', action='store_true', help='print rate limit status')
     parser.add_argument('--list', '-l', type=str, help='List repositories for the specified user')
-    parser.add_argument('--all', '-a', action='store_true')
+    parser.add_argument('--all', '-a', action='store_true', help='Request all pages, up to 1000 items')
     parser.add_argument('--where', '-w', type=str, default='code', help='What type of object to search for: code, user, repo, commit, issue')
     parser.add_argument('--query', '-q', type=str, help='in:{path,file} language:{js,c,python,...} filename:substring extension:ext user: repo: size:')
     parser.add_argument('REPOS', nargs='*', type=str, help='repository list to summarize')
