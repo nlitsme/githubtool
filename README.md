@@ -19,6 +19,11 @@ List repositories owned by `nlitsme`:
     python3 github.py -l nlitsme
 
 
+list all files containing a specific string:
+
+    github -a -q specific_string
+
+
 Find all very large repositories:
 
     github -a -w repo -q "size:>8000000"
