@@ -33,6 +33,10 @@ Find all very large files:
 
     github -a -w code -q "in:path zip size:>500000000"
 
+or
+
+    github -a -w code -q "in:path zip size:400000000..500000000"
+
 
 Print size and description for a list of repositories:
 
