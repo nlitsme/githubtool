@@ -87,25 +87,35 @@ class GithubApi:
             "user_url": "https://api.github.com/users/{user}"
         }
 
-    def __del__(self):
+    def close(self):
         """
         Make sure we close the client when this object is destroyed.
         """
-        self.client.close()
+        return self.client.close()
 
     async def get(self, path, params=dict()):
         """
         Return json response + http header list.
         """
         r = await self.client.get(path, params=params)
-        json = await r.json()
+        try:
+            js = await r.json()
+        except Exception as e:
+            # NOTE: this is a workaround for a bug in aiohttp v2 handling of large http headers
+            #       using aiohttp v3 solves this. But since v2 is supplied with python, i
+            #       include this workaround here.
+            if r._content.startswith(b'\x1f\x8b'):
+                import zlib
+                data = zlib.decompress(r._content, wbits=31)
+                js = json.loads(data)
+
         r.close()
 
         if r.status!=200:
-            print("HTTP status", r.status, json)
-            raise Exception(json.get('message'))
+            print("HTTP status", r.status, js)
+            raise Exception(js.get('message'))
 
-        return json, r.headers
+        return js, r.headers
 
     async def loadapi(self):
         """
@@ -329,6 +339,8 @@ def main():
         tasks.append(inforepos(api, args))
 
     loop.run_until_complete(asyncio.gather(*tasks))
+
+    loop.run_until_complete(api.close())
 
 if __name__ == '__main__':
     main()
