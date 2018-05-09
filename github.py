@@ -113,6 +113,7 @@ class GithubApi:
 
         if r.status!=200:
             print("HTTP status", r.status, js)
+            print(r)
             raise Exception(js.get('message'))
 
         return js, r.headers
@@ -216,17 +217,23 @@ def findlast(link):
     return int(m.group(1))
 
 
-def printresult(where, items):
+def printresult(args, where, items):
     """
     Print one response batch of query results.
     """
     for item in items:
         if where == 'code':
-            print("%-20s %s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
+            if args.urls:
+                print("https://raw.githubusercontent.com/%s/master/%s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
+            else:
+                print("%-20s %s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
         elif where == 'issue':
             print("%-20s %s" % (getjs(item, "html_url"), getjs(item, "body")))
         elif where == 'repo':
-            print("%8d %-25s  %s" % (getjs(item, "size"), getjs(item, "full_name"), getjs(item, "description") or ""))
+            if args.urls:
+                print(getjs(item, "html_url"))
+            else:
+                print("%8d %-25s  %s" % (getjs(item, "size"), getjs(item, "full_name"), getjs(item, "description") or ""))
         elif where == 'user':
             print("%s" % (getjs(item, "login")))
         else:
@@ -246,17 +253,19 @@ async def querygithub(api, args):
     js, hdrs = await api.query(where, args.query)
     lastpage = findlast(hdrs.get('Link'))
     print("FOUND: %d items in %d pages" % (getjs(js, 'total_count'), lastpage or 1))
-    printresult(args.where, js["items"])
+    printresult(args, args.where, js["items"])
 
     if not lastpage or not args.all:
         return
     for p in range(2, lastpage+1):
         js, _ = await api.query(where, args.query, p)
-        printresult(args.where, js["items"])
+        printresult(args, args.where, js["items"])
 
 
 def printrepoinfo(repo, namefield, args):
-    if args.verbose:
+    if args.urls:
+        print(getjs(repo, "html_url"))
+    elif args.verbose:
         print("%10d [%s ; %s] %-25s %s" % (getjs(repo, "size"), getjs(repo, "created_at"), getjs(repo, "updated_at"), getjs(repo, namefield), getjs(repo, "description")))
     else:
         print("%10d %-25s %s" % (getjs(repo, "size"), getjs(repo, namefield), getjs(repo, "description")))
@@ -308,6 +317,7 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='print more info, such as times')
     parser.add_argument('--limits', action='store_true', help='print rate limit status')
     parser.add_argument('--list', '-l', type=str, help='List repositories for the specified user')
+    parser.add_argument('--urls', '-u', action='store_true', help='output url listing')
     parser.add_argument('--all', '-a', action='store_true', help='Request all pages, up to 1000 items')
     parser.add_argument('--where', '-w', type=str, default='code', help='What type of object to search for: code, user, repo, commit, issue')
     parser.add_argument('--query', '-q', type=str, help='in:{path,file} language:{js,c,python,...} filename:substring extension:ext user: repo: size:')
