@@ -47,6 +47,11 @@ List your current ratelimit status:
     github --limits
 
 
+TODO
+====
+
+ * slow down after receiving a '403' - ratelimit triggered.
+
 AUTHOR
 ======
 
