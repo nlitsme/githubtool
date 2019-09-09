@@ -9,6 +9,9 @@ github -a -w repo -q "size:>8000000"
 
 * find all very large files:
 github -a -w code -q "in:path zip size:>500000000"
+
+TODO:  make multiple queries from a single commandline possible.
+
 """
 import asyncio
 import aiohttp.connector
@@ -303,12 +306,15 @@ def sanitizereponame(name):
 
 async def inforepos(api, args):
     for name in args.REPOS:
-        repo = sanitizereponame(name)
-        if not repo:
-            print("failed to parse repository name from '%s'" % name)
-            continue
-        repo, hdrs = await api.info(repo)
-        printrepoinfo(repo, "full_name", args)
+        try:
+            repo = sanitizereponame(name)
+            if not repo:
+                print("failed to parse repository name from '%s'" % name)
+                continue
+            repo, hdrs = await api.info(repo)
+            printrepoinfo(repo, "full_name", args)
+        except Exception as e:
+            print("%s -- %s" % (name, e))
 
 def main():
     import argparse
