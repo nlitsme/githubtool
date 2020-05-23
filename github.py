@@ -12,6 +12,8 @@ github -a -w code -q "in:path zip size:>500000000"
 
 TODO:  make multiple queries from a single commandline possible.
 
+TODO: add option to list all forks, and their current branches ( and forks of forks )
+
 """
 import asyncio
 import aiohttp.connector
@@ -36,24 +38,10 @@ class GithubApi:
         Currently 'args.auth' is used from args.
         """
         self.baseurl = "https://api.github.com/"
+        self.loop = loop
+        self.args = args
 
-        hdrs = dict(Accept='application/vnd.github.v3+json')
-
-        moreargs = dict()
-        if args.auth:
-            if args.auth.find(':')>0:
-                user, pw = args.auth.split(':', 1)
-                # use basic authentication - using a plaintext password.
-                moreargs['auth'] = aiohttp.BasicAuth(user, pw)
-            else:
-                # use the OAuth token
-                hdrs['Authorization'] = 'token %s' % args.auth
-
-        # note: 2 more authentication methods exist:
-        #  * with the OAuth token passed with the 'access_token' url query parameter
-        #  * with the client_id + client_secret query parameters
-
-        self.client = aiohttp.ClientSession(loop=loop, headers=hdrs, **moreargs)
+        self.client = None
 
         # this list can also be obtained from 'baseurl'
         self.d = {
@@ -89,18 +77,39 @@ class GithubApi:
             "user_search_url": "https://api.github.com/search/users?q={query}{&page,per_page,sort,order}",
             "user_url": "https://api.github.com/users/{user}"
         }
+    def getclient(self):
+        if not self.client:
+            hdrs = dict(Accept='application/vnd.github.v3+json')
+
+            moreargs = dict()
+            if self.args.auth:
+                if self.args.auth.find(':')>0:
+                    user, pw = self.args.auth.split(':', 1)
+                    # use basic authentication - using a plaintext password.
+                    moreargs['auth'] = aiohttp.BasicAuth(user, pw)
+                else:
+                    # use the OAuth token
+                    hdrs['Authorization'] = 'token %s' % self.args.auth
+
+            # note: 2 more authentication methods exist:
+            #  * with the OAuth token passed with the 'access_token' url query parameter
+            #  * with the client_id + client_secret query parameters
+
+
+            self.client = aiohttp.ClientSession(loop=self.loop, headers=hdrs, **moreargs)
+        return self.client
 
     def close(self):
         """
         Make sure we close the client when this object is destroyed.
         """
-        return self.client.close()
+        return self.getclient().close()
 
     async def get(self, path, params=dict()):
         """
         Return json response + http header list.
         """
-        r = await self.client.get(path, params=params)
+        r = await self.getclient().get(path, params=params)
         try:
             js = await r.json()
         except Exception as e:
@@ -143,6 +152,26 @@ class GithubApi:
         url = self.getapi("rate_limit_url")
         result, hdrs = await self.get(url)
         return result
+
+    async def addrepo(self, name, desc):
+        """
+        Add a new repository.
+        """
+        url = self.getapi("current_user_repositories_url")
+        url = re.sub(r'\{.*?\}', '', url)
+
+        req = {
+          "name": name,
+          "description": desc,
+          "private": false,
+          "has_issues": true,
+          "has_projects": true,
+          "has_wiki": true
+        }
+
+        result, hdrs = await self.post(url, req)
+        return result
+
 
     def list(self, username, pagenr=1):
         """
@@ -264,6 +293,10 @@ async def querygithub(api, args):
         js, _ = await api.query(where, args.query, p)
         printresult(args, args.where, js["items"])
 
+async def createrepo(api, args, name, desc):
+    result = await api.addrepo(name, desc)
+    print("id = %s, nodeid = %s" % (result.get('id'), result.get('node_id')))
+
 
 def printrepoinfo(repo, namefield, args):
     if args.urls:
@@ -327,6 +360,7 @@ def main():
     parser.add_argument('--all', '-a', action='store_true', help='Request all pages, up to 1000 items')
     parser.add_argument('--where', '-w', type=str, default='code', help='What type of object to search for: code, user, repo, commit, issue')
     parser.add_argument('--query', '-q', type=str, help='in:{path,file} language:{js,c,python,...} filename:substring extension:ext user: repo: size:')
+    parser.add_argument('--create', '-c', type=str, help='Create a new repository, name:description')
     parser.add_argument('REPOS', nargs='*', type=str, help='repository list to summarize')
     args = parser.parse_args()
 
@@ -351,6 +385,9 @@ def main():
         tasks.append(getlimits(api))
     elif args.query:
         tasks.append(querygithub(api, args))
+    elif args.create:
+        name, desc = args.create.split(':', 1)
+        tasks.append(createrepo(api, args, name, desc))
     else:
         tasks.append(inforepos(api, args))
 
