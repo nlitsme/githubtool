@@ -10,13 +10,28 @@ You can search code, repositories, users. Or list repositories owned by a specif
 You can specify your `username:password`, or an authentiction token with the `--auth` commandline
 argument. Or you can store the `auth` parameter in a json file named `~/.github_cmdline_rc`.
 
+Install
+=======
+
+You can insall this tool from [pypi](https://pypi.org/project/github-tool/) using pip:
+
+    pip install github_tool
+
+And then execute it like this:
+
+    github -l nlitsme
+
+
+Or run it directly from the source directory using:
+
+    python3 github_tool.py -l nlitsme
 
 Examples
 ========
 
 List repositories owned by `nlitsme`:
 
-    python3 github.py -l nlitsme
+    github -l nlitsme
 
 
 list all files containing a specific string:
