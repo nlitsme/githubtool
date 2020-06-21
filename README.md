@@ -15,7 +15,7 @@ Install
 
 You can insall this tool from [pypi](https://pypi.org/project/github-tool/) using pip:
 
-    pip install github_tool
+    pip install github-tool
 
 And then execute it like this:
 
