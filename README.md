@@ -66,6 +66,7 @@ TODO
 ====
 
  * slow down after receiving a '403' - ratelimit triggered.
+ * show network of a list of repos by querying  github.com/<user>/<repo>/network/meta
 
 AUTHOR
 ======
