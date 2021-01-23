@@ -62,8 +62,10 @@ class GithubApi:
             "issue_search_url": "https://api.github.com/search/issues?q={query}{&page,per_page,sort,order}",
             "issues_url": "https://api.github.com/issues",
             "keys_url": "https://api.github.com/user/keys",
+            "label_search_url": "https://api.github.com/search/labels?q={query}&repository_id={repository_id}{&page,per_page}",
             "notifications_url": "https://api.github.com/notifications",
             "organization_repositories_url": "https://api.github.com/orgs/{org}/repos{?type,page,per_page,sort}",
+            "organization_teams_url": "https://api.github.com/orgs/{org}/teams",
             "organization_url": "https://api.github.com/orgs/{org}",
             "public_gists_url": "https://api.github.com/gists/public",
             "rate_limit_url": "https://api.github.com/rate_limit",
@@ -71,11 +73,11 @@ class GithubApi:
             "repository_url": "https://api.github.com/repos/{owner}/{repo}",
             "starred_gists_url": "https://api.github.com/gists/starred",
             "starred_url": "https://api.github.com/user/starred{/owner}{/repo}",
-            "team_url": "https://api.github.com/teams",
+            #"team_url": "https://api.github.com/teams",
             "user_organizations_url": "https://api.github.com/user/orgs",
             "user_repositories_url": "https://api.github.com/users/{user}/repos{?type,page,per_page,sort}",
             "user_search_url": "https://api.github.com/search/users?q={query}{&page,per_page,sort,order}",
-            "user_url": "https://api.github.com/users/{user}"
+            "user_url": "https://api.github.com/users/{user}",
         }
     def getclient(self):
         if not self.client:
@@ -203,13 +205,15 @@ class GithubApi:
 
 
 
-def getjs(js, path):
+def getjs(js, path, default=""):
     """
     path is a 'dotted path', with each DOT representing one level
     in the nested json dictionary.
 
     Returns the nested value pointed to by 'path'.
     """
+    if not js:
+        return default
     if path.find('.')>=0:
         this, rest = path.split('.', 1)
         return getjs(js[this], rest)
@@ -307,13 +311,15 @@ def printrepoinfo(repo, namefield, args):
         print("%10d %-25s %s" % (getjs(repo, "size"), getjs(repo, namefield), getjs(repo, "description")))
 
 
-def printrepolist(jslist, args):
+async def printrepolist(api, jslist, args):
     """
     Print one response batch of user repositories
     """
     for repo in jslist:
         if args.all or not repo["fork"]:
             printrepoinfo(repo, "name", args)
+            if args.network:
+                await recurse_network(api, getjs(repo, "owner.login"), repo.get("forks_url"), repo.get("forks"))
 
 
 async def listrepos(api, user, args):
@@ -322,12 +328,12 @@ async def listrepos(api, user, args):
     """
     js, hdrs = await api.list(user)
     lastpage = findlast(hdrs.get('Link'))
-    printrepolist(js, args)
+    await printrepolist(api, js, args)
     if not lastpage or not args.all:
         return
     for p in range(2, lastpage+1):
         js, _ = await api.list(user, p)
-        printrepolist(js, args)
+        await printrepolist(api, js, args)
 
 def sanitizereponame(name):
     name = re.sub(r'.*github.com/', '', name)
@@ -346,16 +352,45 @@ async def inforepos(api, args):
                 continue
             repo, hdrs = await api.info(repo)
             printrepoinfo(repo, "full_name", args)
+            if args.network and repo.get("forks"):
+                await recurse_network(api, getjs(repo, "owner.login"), repo.get("forks_url"), repo.get("forks"))
         except Exception as e:
             print("%s -- %s" % (name, e))
+            if args.debug:
+                raise
+
+async def recurse_network(api, baseuser, url, nrforks, level=0):
+    for pagenr in range((nrforks-1)//30+1):
+        forks, hdrs = await api.get(url, dict(per_page=30, page=pagenr+1))
+        for fork in forks:
+            try:
+                compareurl = fork.get("compare_url")
+                compareurl = compareurl.replace("{base}", baseuser+":master")
+                compareurl = compareurl.replace("{head}", "master")
+                compare, hdrs = await api.get(compareurl)
+            except Exception as e:
+                compare = None
+
+            printforkinfo(fork, compare, level)
+            if fork.get("forks"):
+                await recurse_network(api, baseuser, fork.get("forks_url"), fork.get("forks"), level+1)
+
+
+def printforkinfo(fork, compare, indentlevel):
+    print("%10d  %+3d %+3d  [%s] %s%s" % (
+        getjs(fork, "size"), getjs(compare, "ahead_by", 0), -getjs(compare, "behind_by", 0),
+        getjs(fork, "pushed_at"),
+        "  " * indentlevel, getjs(fork, "full_name")))
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='Tool for interogating github')
     parser.add_argument('--auth', type=str, help='OAuth token, or "username:password"')
     parser.add_argument('--verbose', '-v', action='store_true', help='print more info, such as times')
+    parser.add_argument('--debug', action='store_true', help='print full exception')
     parser.add_argument('--limits', action='store_true', help='print rate limit status')
     parser.add_argument('--list', '-l', type=str, help='List repositories for the specified user')
+    parser.add_argument('--network', '-n', action='store_true', help='Show list of all forks and their state')
     parser.add_argument('--urls', '-u', action='store_true', help='output url listing')
     parser.add_argument('--all', '-a', action='store_true', help='Request all pages, up to 1000 items')
     parser.add_argument('--where', '-w', type=str, default='code', help='What type of object to search for: code, user, repo, commit, issue')
