@@ -1,7 +1,7 @@
 from setuptools import setup
 setup(
     name = "github_tool",
-    version = "1.0.0",
+    version = "1.0.1",
     entry_points = {
         'console_scripts': ['github=github_tool:main'],
     },
