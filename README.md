@@ -6,6 +6,8 @@ A tool for searching things on github from the commandline.
 This tool needs python3.
 
 You can search code, repositories, users. Or list repositories owned by a specific user.
+The `--network` option will show info for all forks, like how many commits a fork is behind or ahead
+of the main repo.
 
 You can specify your `username:password`, or an authentiction token with the `--auth` commandline
 argument. Or you can store the `auth` parameter in a json file named `~/.github_cmdline_rc`.
@@ -61,12 +63,19 @@ List your current ratelimit status:
 
     github --limits
 
+List information for all forks of a specific repository:
+
+    github --network https://github.com/nlitsme/extfstools
+
+Or list information for all forks from a user:
+
+    github -n -l nlitsme
+
 
 TODO
 ====
 
  * slow down after receiving a '403' - ratelimit triggered.
- * show network of a list of repos by querying  github.com/<user>/<repo>/network/meta
 
 AUTHOR
 ======
