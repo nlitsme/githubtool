@@ -260,7 +260,11 @@ def printresult(args, where, items):
     for item in items:
         if where == 'code':
             if args.urls:
-                print("https://raw.githubusercontent.com/%s/master/%s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
+                html_url = getjs(item, 'html_url') or ''
+                match = re.compile('blob/([0-9a-f]+)/').search(html_url)
+                if match:
+                    blob = match.group(1)
+                    print("https://raw.githubusercontent.com/%s/%s/%s" % (getjs(item, "repository.full_name"), blob, getjs(item, "path")))
             else:
                 print("%-20s %s" % (getjs(item, "repository.full_name"), getjs(item, "path")))
         elif where == 'issue':
