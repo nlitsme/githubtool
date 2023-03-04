@@ -76,6 +76,12 @@ TODO
 ====
 
  * slow down after receiving a '403' - ratelimit triggered.
+    * I did add option to go slow.
+ * show network of a list of repos by querying github.com/<user>/<repo>/network/meta
+ * make multiple queries from a single commandline possible.
+ * add option to list all forks, and their current branches ( and forks of forks )
+ * '-l'  should take it's arg from the REPOS list, and also understand githuburls
+
 
 AUTHOR
 ======
