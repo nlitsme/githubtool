@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 """
 Author: Willem Hengeveld <itsme@xs4all.nl>
 
@@ -10,10 +11,6 @@ github -a -w repo -q "size:>8000000"
 * find all very large files:
 github -a -w code -q "in:path zip size:>500000000"
 
-TODO:  make multiple queries from a single commandline possible.
-
-TODO: add option to list all forks, and their current branches ( and forks of forks )
-
 """
 import asyncio
 import aiohttp.connector
@@ -25,6 +22,7 @@ import time
 import re
 import json
 from collections import defaultdict
+import datetime
 
 
 class GithubApi:
@@ -40,6 +38,8 @@ class GithubApi:
         self.baseurl = "https://api.github.com/"
         self.loop = loop
         self.args = args
+
+        self.tnext = None
 
         self.client = None
 
@@ -107,10 +107,23 @@ class GithubApi:
         """
         return self.getclient().close()
 
+    async def set_pace(self):
+        if self.tnext:
+            dt = self.tnext - datetime.datetime.now()
+            await asyncio.sleep(dt.total_seconds())
+
+        if self.args.pace:
+            self.tnext = datetime.datetime.now() + datetime.timedelta(milliseconds=self.args.pace)
+
     async def get(self, path, params=dict()):
         """
         Return json response + http header list.
         """
+        await self.set_pace()
+
+        if self.args.trace:
+            print("GET", path, params)
+
         r = await self.getclient().get(path, params=params)
         try:
             js = await r.json()
@@ -404,6 +417,7 @@ def main():
     parser = argparse.ArgumentParser(description='Tool for interogating github')
     parser.add_argument('--auth', type=str, help='OAuth token, or "username:password"')
     parser.add_argument('--verbose', '-v', action='store_true', help='print more info, such as times')
+    parser.add_argument('--trace', action='store_true', help='print http requests')
     parser.add_argument('--debug', action='store_true', help='print full exception')
     parser.add_argument('--limits', action='store_true', help='print rate limit status')
     parser.add_argument('--list', '-l', type=str, help='List repositories for the specified user')
@@ -414,8 +428,13 @@ def main():
     parser.add_argument('--branch', '-b', type=str, help='Force branch to compare (can also be provided as <base>:<head>, e.g. "master:main")')
     parser.add_argument('--query', '-q', type=str, help='in:{path,file} language:{js,c,python,...} filename:substring extension:ext user: repo: size:')
     parser.add_argument('--create', '-c', type=str, help='Create a new repository, name:description')
+    parser.add_argument('--slow', action='store_true', help='slow down requests to one per 5 seconds.')
+    parser.add_argument('--pace', type=int, help='msec to wait between requests. This to avoid running out of rate-limits.')
     parser.add_argument('REPOS', nargs='*', type=str, help='repository list to summarize')
     args = parser.parse_args()
+
+    if args.slow:
+        args.pace = 5000
 
     try:
         with open(os.getenv("HOME")+"/.github_cmdline_rc") as fh:
@@ -427,7 +446,8 @@ def main():
     if not args.auth:
         args.auth = cfg.get('auth')
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     api = GithubApi(loop, args)
 
