@@ -319,7 +319,7 @@ async def printrepolist(api, jslist, args):
         if args.all or not repo["fork"]:
             printrepoinfo(repo, "name", args)
             if args.network:
-                await recurse_network(api, getjs(repo, "owner.login"), repo.get("forks_url"), repo.get("forks"))
+                await recurse_network(api, args, getjs(repo, "owner.login"), repo.get("default_branch"), repo.get("forks_url"), repo.get("forks"))
 
 
 async def listrepos(api, user, args):
@@ -353,27 +353,40 @@ async def inforepos(api, args):
             repo, hdrs = await api.info(repo)
             printrepoinfo(repo, "full_name", args)
             if args.network and repo.get("forks"):
-                await recurse_network(api, getjs(repo, "owner.login"), repo.get("forks_url"), repo.get("forks"))
+                await recurse_network(api, args, getjs(repo, "owner.login"), repo.get("default_branch"), repo.get("forks_url"), repo.get("forks"))
         except Exception as e:
             print("%s -- %s" % (name, e))
             if args.debug:
                 raise
 
-async def recurse_network(api, baseuser, url, nrforks, level=0):
-    for pagenr in range((nrforks-1)//30+1):
-        forks, hdrs = await api.get(url, dict(per_page=30, page=pagenr+1))
+async def recurse_network(api, args, baseuser, default_branch, url, nrforks, level=0):
+    per_page = 100
+
+    for pagenr in range((nrforks-1)//per_page+1):
+        forks, hdrs = await api.get(url, dict(per_page=per_page, page=pagenr+1))
         for fork in forks:
+            default_branch_fork = fork.get("default_branch")
+
             try:
+                if args.branch:
+                    branch = args.branch.split(':')
+                    compare_branch_base = branch[0]
+                    compare_branch_head = branch[1] if len(branch) == 2 else branch[0]
+                else:
+                    compare_branch_base = default_branch
+                    compare_branch_head = default_branch_fork
+
                 compareurl = fork.get("compare_url")
-                compareurl = compareurl.replace("{base}", baseuser+":master")
-                compareurl = compareurl.replace("{head}", "master")
+                compareurl = compareurl.replace("{base}", "%s:%s" % (baseuser, compare_branch_base))
+                compareurl = compareurl.replace("{head}", compare_branch_head)
+
                 compare, hdrs = await api.get(compareurl)
             except Exception as e:
                 compare = None
 
             printforkinfo(fork, compare, level)
             if fork.get("forks"):
-                await recurse_network(api, baseuser, fork.get("forks_url"), fork.get("forks"), level+1)
+                await recurse_network(api, args, getjs(fork, "owner.login"), default_branch_fork, fork.get("forks_url"), fork.get("forks"), level+1)
 
 
 def printforkinfo(fork, compare, indentlevel):
@@ -394,6 +407,7 @@ def main():
     parser.add_argument('--urls', '-u', action='store_true', help='output url listing')
     parser.add_argument('--all', '-a', action='store_true', help='Request all pages, up to 1000 items')
     parser.add_argument('--where', '-w', type=str, default='code', help='What type of object to search for: code, user, repo, commit, issue')
+    parser.add_argument('--branch', '-b', type=str, help='Force branch to compare (can also be provided as <base>:<head>, e.g. "master:main")')
     parser.add_argument('--query', '-q', type=str, help='in:{path,file} language:{js,c,python,...} filename:substring extension:ext user: repo: size:')
     parser.add_argument('--create', '-c', type=str, help='Create a new repository, name:description')
     parser.add_argument('REPOS', nargs='*', type=str, help='repository list to summarize')
