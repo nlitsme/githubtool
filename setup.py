@@ -5,7 +5,7 @@ setup(
     entry_points = {
         'console_scripts': ['github=github_tool:main'],
     },
-    install_requires = ['aiohttp==3.7.4'],
+    install_requires = ['aiohttp==3.8.5'],
     py_modules=['github_tool'],
     author = "Willem Hengeveld",
     author_email = "itsme@xs4all.nl",
